@@ -9,7 +9,7 @@ export class CodingCamApi {
   constructor() {
     // Get API URL from settings
     const config = vscode.workspace.getConfiguration('codingcam');
-    this.apiUrl = config.get('apiUrl') || 'http://localhost:3000/api';
+    this.apiUrl = config.get('apiUrl') || 'http://localhost:3001/api';
     this.token = config.get('apiKey');
   }
 

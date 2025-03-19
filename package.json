@@ -3,7 +3,7 @@
   "displayName": "CodingCam Tracker",
   "description": "Track your coding time and activity",
   "version": "0.1.0",
-  "publisher": "your-publisher-name",
+  "publisher": "snipxt-dev",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -17,7 +17,7 @@
   "activationEvents": [
     "*"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/api.js",
   "contributes": {
     "commands": [
       {
@@ -38,7 +38,7 @@
       "properties": {
         "codingcam.apiUrl": {
           "type": "string",
-          "default": "http://localhost:3000/api",
+          "default": "http://localhost:3001/api",
           "description": "URL to your CodingCam backend API"
         },
         "codingcam.apiKey": {
@@ -51,7 +51,6 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
@@ -64,7 +63,8 @@
   "devDependencies": {
     "@types/node": "^16.11.7",
     "@types/vscode": "^1.60.0",
-    "typescript": "^4.5.5",
-    "@vscode/vsce": "^2.15.0"
+    "@vscode/vsce": "^2.15.0",
+    "esbuild": "^0.25.1",
+    "typescript": "^4.5.5"
   }
 }
