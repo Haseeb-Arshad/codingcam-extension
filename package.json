@@ -1,0 +1,66 @@
+{
+  "name": "codingcam-tracker",
+  "displayName": "CodingCam Tracker",
+  "description": "Track your coding time and activity",
+  "version": "0.1.0",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codingcam.login",
+        "title": "CodingCam: Login"
+      },
+      {
+        "command": "codingcam.register",
+        "title": "CodingCam: Register"
+      },
+      {
+        "command": "codingcam.viewStats",
+        "title": "CodingCam: View Stats"
+      }
+    ],
+    "configuration": {
+      "title": "CodingCam",
+      "properties": {
+        "codingcam.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3000/api",
+          "description": "URL to your CodingCam backend API"
+        },
+        "codingcam.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your CodingCam API key (JWT token)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/vscode": "^1.60.0",
+    "typescript": "^4.5.5",
+    "@vscode/vsce": "^2.15.0"
+  }
+}
