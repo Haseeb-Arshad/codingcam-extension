@@ -1,15 +1,11 @@
 {
   "name": "codingcam-tracker",
   "displayName": "CodingCam Tracker",
-  "description": "Track your coding time and activity",
+  "description": "Track your coding time and activity with CodingCam.",
   "version": "0.1.0",
   "publisher": "snipxt-dev",
   "engines": {
     "vscode": "^1.60.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/Haseeb-Arshad/codingcam.git"
   },
   "categories": [
     "Other"
@@ -17,34 +13,102 @@
   "activationEvents": [
     "*"
   ],
-  "main": "./dist/api.js",
+  "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "codingcam.login",
-        "title": "CodingCam: Login"
+        "command": "codingcam.apikey",
+        "title": "CodingCam: Api Key"
       },
       {
-        "command": "codingcam.register",
-        "title": "CodingCam: Register"
+        "command": "codingcam.apiurl",
+        "title": "CodingCam: Api Url"
       },
       {
-        "command": "codingcam.viewStats",
-        "title": "CodingCam: View Stats"
+        "command": "codingcam.proxy",
+        "title": "CodingCam: Proxy"
+      },
+      {
+        "command": "codingcam.debug",
+        "title": "CodingCam: Debug"
+      },
+      {
+        "command": "codingcam.disable",
+        "title": "CodingCam: Disable/Enable"
+      },
+      {
+        "command": "codingcam.status_bar_enabled",
+        "title": "CodingCam: Toggle Status Bar Icon"
+      },
+      {
+        "command": "codingcam.status_bar_coding_activity",
+        "title": "CodingCam: Toggle Status Bar Coding Activity"
+      },
+      {
+        "command": "codingcam.dashboard",
+        "title": "CodingCam: Dashboard"
+      },
+      {
+        "command": "codingcam.config_file",
+        "title": "CodingCam: Open Config File"
+      },
+      {
+        "command": "codingcam.log_file",
+        "title": "CodingCam: Open Log File"
       }
     ],
     "configuration": {
       "title": "CodingCam",
       "properties": {
+        "codingcam.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your CodingCam API Key"
+        },
         "codingcam.apiUrl": {
           "type": "string",
           "default": "http://localhost:3001/api",
           "description": "URL to your CodingCam backend API"
         },
-        "codingcam.apiKey": {
+        "codingcam.proxy": {
           "type": "string",
           "default": "",
-          "description": "Your CodingCam API key (JWT token)"
+          "description": "Proxy URL (e.g., https://user:pass@host:port)"
+        },
+        "codingcam.debug": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable debug logging"
+        },
+        "codingcam.disabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable the CodingCam extension"
+        },
+        "codingcam.status_bar_enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the CodingCam status bar icon"
+        },
+        "codingcam.status_bar_coding_activity": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show coding activity in the status bar"
+        },
+        "codingcam.status_bar_team": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show team coding stats in the status bar"
+        },
+        "codingcam.metrics": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable additional metrics tracking"
+        },
+        "codingcam.no_ssl_verify": {
+          "type": "boolean",
+          "default": false,
+          "description": "Disable SSL verification for API calls"
         }
       }
     }
@@ -52,19 +116,22 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
-    "package": "vsce package --allow-missing-repository"
-  },
-  "dependencies": {
-    "axios": "^1.6.0",
-    "vscode-languageclient": "^9.0.1"
+    "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/node": "^16.11.7",
+    "@types/adm-zip": "^0.5.5",
+    "@types/node": "^18.0.0",
+    "@types/request": "^2.48.8",
+    "@types/semver": "^7.5.8",
     "@types/vscode": "^1.60.0",
-    "@vscode/vsce": "^2.15.0",
-    "esbuild": "^0.25.1",
-    "typescript": "^4.5.5"
+    "@types/which": "^3.0.4",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.10",
+    "axios": "^1.6.0",
+    "request": "^2.88.2",
+    "semver": "^7.7.1",
+    "which": "^4.0.0"
   }
 }

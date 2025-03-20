@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import axios from 'axios';
 import * as os from 'os';
 
-export class CodingCamApi {
+export class CodingCamBackendApi {
   private apiUrl: string;
   private token: string | undefined;
 
@@ -87,27 +87,6 @@ export class CodingCamApi {
     } catch (error) {
       console.error('Registration error:', error);
       return null;
-    }
-  }
-
-  async getUserStats(startDate: string, endDate: string): Promise<any> {
-    if (!this.token) {
-      throw new Error('CodingCam API key not set');
-    }
-
-    try {
-      const response = await axios.get(`${this.apiUrl}/analytics/daily`, {
-        params: { startDate, endDate },
-        headers: {
-          'Authorization': `Bearer ${this.token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      return response.data;
-    } catch (error) {
-      console.error('Error fetching user stats:', error);
-      throw error;
     }
   }
 }
