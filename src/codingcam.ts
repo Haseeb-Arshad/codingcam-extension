@@ -18,13 +18,13 @@ interface FileSelectionMap {
 }
 
 export class CodingCam {
-  private agentName: string;
+  private agentName: string = '';
   private extension: any;
   private statusBar?: vscode.StatusBarItem = undefined;
   private statusBarTeamYou?: vscode.StatusBarItem = undefined;
   private statusBarTeamOther?: vscode.StatusBarItem = undefined;
-  private disposable: vscode.Disposable;
-  private lastFile: string;
+  private disposable!: vscode.Disposable;
+  private lastFile: string = '';
   private lastHeartbeat: number = 0;
   private lastDebug: boolean = false;
   private lastCompile: boolean = false;
@@ -35,17 +35,17 @@ export class CodingCam {
   private logger: Logger;
   private fetchTodayInterval: number = 60000;
   private lastFetchToday: number = 0;
-  private showStatusBar: boolean;
-  private showCodingActivity: boolean;
-  private showStatusBarTeam: boolean;
-  private hasTeamFeatures: boolean;
+  private showStatusBar: boolean = false;
+  private showCodingActivity: boolean = false;
+  private showStatusBarTeam: boolean = false;
+  private hasTeamFeatures: boolean = false;
   private disabled: boolean = true;
   private extensionPath: string;
   private isCompiling: boolean = false;
   private isDebugging: boolean = false;
-  private currentlyFocusedFile: string;
-  private teamDevsForFileCache = {};
-  private resourcesLocation: string;
+  private currentlyFocusedFile: string = '';
+  private teamDevsForFileCache: Record<string, any> = {};
+  private resourcesLocation: string = '';
   private lastApiKeyPrompted: number = 0;
   private isMetricsEnabled: boolean = false;
 
@@ -706,7 +706,7 @@ export class CodingCam {
                 if (this.showCodingActivity) {
                   this.updateStatusBarText(jsonData.text.trim());
                   this.updateStatusBarTooltip(
-                    'CodingCam: Today’s coding time. Click to visit dashboard.',
+                    'CodingCam: Todays coding time. Click to visit dashboard.',
                   );
                 } else {
                   this.updateStatusBarText();
@@ -869,7 +869,7 @@ export class CodingCam {
     if (other) {
       this.updateTeamStatusBarTextForOther(other.user.name + ': ' + other.total.text);
       this.updateStatusBarTooltipForOther(
-        other.user.long_name + '’s total time spent in this file',
+        other.user.long_name + 's total time spent in this file',
       );
     } else {
       this.updateTeamStatusBarTextForOther();

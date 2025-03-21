@@ -1,7 +1,7 @@
 import { LogLevel } from './constants';
 
 export class Logger {
-  private level: LogLevel;
+  private level!: LogLevel;
 
   constructor(level: LogLevel) {
     this.setLevel(level);

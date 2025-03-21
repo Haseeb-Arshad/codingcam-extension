@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 
 export class Utils {
-  private static appNames = {
+  private static appNames: Record<string, string> = {
     'Arduino IDE': 'arduino',
     'Azure Data Studio': 'azdata',
     Cursor: 'cursor',

@@ -19,8 +19,8 @@ export class Desktop {
     return process.env[this.isWindows() ? 'USERPROFILE' : 'HOME'] || process.cwd();
   }
 
-  public static buildOptions(): Object {
-    const options = {
+  public static buildOptions(): Record<string, any> {
+    const options: Record<string, any> = {
       windowsHide: true,
     };
     if (!this.isWindows() && !process.env.CODINGCAM_HOME && !process.env.HOME) {

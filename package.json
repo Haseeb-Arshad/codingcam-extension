@@ -116,7 +116,10 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package",
+    "publish": "vsce publish"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.5",
@@ -125,6 +128,7 @@
     "@types/semver": "^7.5.8",
     "@types/vscode": "^1.60.0",
     "@types/which": "^3.0.4",
+    "@vscode/vsce": "^3.3.0",
     "typescript": "^5.0.0"
   },
   "dependencies": {

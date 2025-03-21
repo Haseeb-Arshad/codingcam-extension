@@ -6,6 +6,7 @@ import * as path from 'path';
 import * as request from 'request';
 import * as semver from 'semver';
 import * as which from 'which';
+import AdmZip from 'adm-zip';
 // import * as which from 'which'
 
 import { Options, Setting } from './options'; 
@@ -16,6 +17,14 @@ enum osName {
   darwin = 'darwin',
   windows = 'windows',
   linux = 'linux',
+}
+
+interface RequestOptions {
+  url: string;
+  json?: boolean;
+  headers?: Record<string, string>;
+  proxy?: string;
+  strictSSL?: boolean;
 }
 
 export class CodingCamDependencies {
@@ -121,7 +130,7 @@ export class CodingCamDependencies {
             true,
             (accessed: Setting) => {
               const now = Math.round(Date.now() / 1000);
-              const lastAccessed = parseInt(accessed.value);
+              const lastAccessed = accessed.value ? parseInt(accessed.value) : 0;
               const fourHours = 4 * 3600;
               if (lastAccessed && lastAccessed + fourHours > now) {
                 this.logger.debug(
@@ -160,7 +169,7 @@ export class CodingCamDependencies {
   private getLatestCliVersion(callback: (arg0: string) => void): void {
     this.options.getSetting('settings', 'proxy', false, (proxy: Setting) => {
       this.options.getSetting('settings', 'no_ssl_verify', false, (noSSLVerify: Setting) => {
-        let options = {
+        let options: RequestOptions = {
           url: this.githubReleasesUrl,
           json: true,
           headers: {
@@ -170,9 +179,9 @@ export class CodingCamDependencies {
         this.logger.debug(`Fetching latest codingcam-cli version from GitHub API: ${options.url}`);
         if (proxy.value) {
           this.logger.debug(`Using Proxy: ${proxy.value}`);
-          options['proxy'] = proxy.value;
+          options.proxy = proxy.value;
         }
-        if (noSSLVerify.value === 'true') options['strictSSL'] = false;
+        if (noSSLVerify.value === 'true') options.strictSSL = false;
         try {
           request.get(options, (error, response, json) => {
             if (!error && response && response.statusCode == 200) {
@@ -289,12 +298,12 @@ export class CodingCamDependencies {
   ): void {
     this.options.getSetting('settings', 'proxy', false, (proxy: Setting) => {
       this.options.getSetting('settings', 'no_ssl_verify', false, (noSSLVerify: Setting) => {
-        let options = { url: url };
+        let options: RequestOptions = { url: url };
         if (proxy.value) {
           this.logger.debug(`Using Proxy: ${proxy.value}`);
-          options['proxy'] = proxy.value;
+          options.proxy = proxy.value;
         }
-        if (noSSLVerify.value === 'true') options['strictSSL'] = false;
+        if (noSSLVerify.value === 'true') options.strictSSL = false;
         try {
           let r = request.get(options);
           r.on('error', (e) => {
@@ -320,7 +329,7 @@ export class CodingCamDependencies {
   private unzip(file: string, outputDir: string, callback: (unzipped: boolean) => void): void {
     if (fs.existsSync(file)) {
       try {
-        let zip = new adm_zip(file);
+        let zip = new AdmZip(file);
         zip.extractAllTo(outputDir, true);
         fs.unlinkSync(file);
         callback(true);
@@ -405,9 +414,9 @@ export class CodingCamDependencies {
     const url = `https://api.codingcam.com/api/v1/cli-missing?osname=${osname}&architecture=${architecture}&plugin=vscode`;
     this.options.getSetting('settings', 'proxy', false, (proxy: Setting) => {
       this.options.getSetting('settings', 'no_ssl_verify', false, (noSSLVerify: Setting) => {
-        let options = { url: url };
-        if (proxy.value) options['proxy'] = proxy.value;
-        if (noSSLVerify.value === 'true') options['strictSSL'] = false;
+        let options: RequestOptions = { url: url };
+        if (proxy.value) options.proxy = proxy.value;
+        if (noSSLVerify.value === 'true') options.strictSSL = false;
         try {
           request.get(options);
         } catch (e) {}

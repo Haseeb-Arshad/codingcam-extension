@@ -8,8 +8,8 @@ import { Utils } from './utils';
 
 export interface Setting {
   key: string;
-  value: string;
-  error?: string;
+  value: string | null;
+  error?: string | Error;
 }
 
 export class Options {
@@ -29,7 +29,11 @@ export class Options {
   public async getSettingAsync<T = any>(section: string, key: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.getSetting(section, key, false, (setting) => {
-        setting.error ? reject(setting.error) : resolve(setting.value);
+        if (setting.error) {
+          reject(setting.error);
+        } else {
+          resolve(setting.value as unknown as T);
+        }
       });
     });
   }
@@ -38,7 +42,7 @@ export class Options {
     section: string,
     key: string,
     internal: boolean,
-    callback: (Setting) => void,
+    callback: (arg0: Setting) => void,
   ): void {
     fs.readFile(
       this.getConfigFile(internal),
@@ -135,7 +139,7 @@ export class Options {
       let contents: string[] = [];
       let currentSection = '';
 
-      const found = {};
+      const found: Record<string, boolean> = {};
       let lines = content.split('\n');
       for (var i = 0; i < lines.length; i++) {
         let line = lines[i];

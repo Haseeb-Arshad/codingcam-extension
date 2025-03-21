@@ -15,22 +15,32 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.activate = exports.CodingCamApi = void 0;
+exports.CodingCamBackendApi = void 0;
 const vscode = __importStar(require("vscode"));
 const axios_1 = __importDefault(require("axios"));
 const os = __importStar(require("os"));
-class CodingCamApi {
+class CodingCamBackendApi {
     constructor() {
         // Get API URL from settings
         const config = vscode.workspace.getConfiguration('codingcam');
@@ -39,11 +49,10 @@ class CodingCamApi {
     }
     async sendHeartbeat(data) {
         if (!this.token) {
-            vscode.window.showWarningMessage('CodingCam API key not set. Please configure it in settings.');
+            console.log('CodingCam API key not set');
             return;
         }
         try {
-            const timestamp = new Date(data.time * 1000).toISOString();
             const payload = {
                 project_name: data.project,
                 language_name: data.language,
@@ -52,8 +61,9 @@ class CodingCamApi {
                 file_path: data.entity,
                 line_count: data.lines,
                 cursor_position: data.cursorpos,
-                started_at: timestamp,
-                ended_at: timestamp
+                duration_seconds: 0, // Will be calculated on the server
+                started_at: new Date(data.time * 1000).toISOString(),
+                ended_at: new Date(data.time * 1000).toISOString() // Same as started_at for heartbeats
             };
             await axios_1.default.post(`${this.apiUrl}/activities`, payload, {
                 headers: {
@@ -63,90 +73,43 @@ class CodingCamApi {
             });
         }
         catch (error) {
-            vscode.window.showErrorMessage('Failed to send heartbeat to CodingCam backend.');
-            console.error('Error sending heartbeat:', error);
+            console.error('Error sending heartbeat to CodingCam backend:', error);
         }
     }
     async login(email, password) {
         try {
-            const response = await axios_1.default.post(`${this.apiUrl}/auth/login`, { email, password });
-            const token = response.data.token;
-            if (token) {
-                this.token = token;
-                await vscode.workspace.getConfiguration('codingcam').update('apiKey', token, vscode.ConfigurationTarget.Global);
-                vscode.window.showInformationMessage('Login successful!');
-                return token;
+            const response = await axios_1.default.post(`${this.apiUrl}/auth/login`, {
+                email,
+                password
+            });
+            if (response.data && response.data.token) {
+                return response.data.token;
             }
-            vscode.window.showErrorMessage('Login failed: No token received.');
             return null;
         }
         catch (error) {
-            vscode.window.showErrorMessage('Login failed. Check your credentials.');
             console.error('Login error:', error);
             return null;
         }
     }
     async register(email, password, username, fullName) {
         try {
-            const response = await axios_1.default.post(`${this.apiUrl}/auth/register`, { email, password, username, fullName });
-            const token = response.data.token;
-            if (token) {
-                this.token = token;
-                await vscode.workspace.getConfiguration('codingcam').update('apiKey', token, vscode.ConfigurationTarget.Global);
-                vscode.window.showInformationMessage('Registration successful!');
-                return token;
+            const response = await axios_1.default.post(`${this.apiUrl}/auth/register`, {
+                email,
+                password,
+                username,
+                fullName
+            });
+            if (response.data && response.data.token) {
+                return response.data.token;
             }
-            vscode.window.showErrorMessage('Registration failed: No token received.');
             return null;
         }
         catch (error) {
-            vscode.window.showErrorMessage('Registration failed.');
             console.error('Registration error:', error);
             return null;
         }
     }
-    async getUserStats(startDate, endDate) {
-        if (!this.token) {
-            throw new Error('CodingCam API key not set');
-        }
-        try {
-            const response = await axios_1.default.get(`${this.apiUrl}/analytics/daily`, {
-                params: { startDate, endDate },
-                headers: {
-                    'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
-                }
-            });
-            return response.data;
-        }
-        catch (error) {
-            console.error('Error fetching user stats:', error);
-            throw error;
-        }
-    }
 }
-exports.CodingCamApi = CodingCamApi;
-function activate(context) {
-    const api = new CodingCamApi();
-    context.subscriptions.push(vscode.commands.registerCommand('codingcam.login', async () => {
-        const email = await vscode.window.showInputBox({ prompt: 'Email' });
-        const password = await vscode.window.showInputBox({ prompt: 'Password', password: true });
-        if (email && password)
-            await api.login(email, password);
-    }), vscode.commands.registerCommand('codingcam.register', async () => {
-        const email = await vscode.window.showInputBox({ prompt: 'Email' });
-        const password = await vscode.window.showInputBox({ prompt: 'Password', password: true });
-        const username = await vscode.window.showInputBox({ prompt: 'Username' });
-        if (email && password && username)
-            await api.register(email, password, username);
-    }), vscode.workspace.onDidChangeTextDocument(async (e) => {
-        await api.sendHeartbeat({
-            entity: e.document.fileName,
-            type: 'file',
-            time: Math.floor(Date.now() / 1000),
-            is_write: true
-        });
-    }));
-}
-exports.activate = activate;
+exports.CodingCamBackendApi = CodingCamBackendApi;
 //# sourceMappingURL=api.js.map
