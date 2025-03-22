@@ -110,19 +110,34 @@ export class SessionManager {
           sessionData.endTime = sessionData.lastActive;
           sessionData.totalDuration = Math.floor((sessionData.lastActive - sessionData.startTime) / 1000);
           
-          // Prepare and queue/send the recovered session
+          // Prepare session payload
           const payload = this.prepareActivityPayload(sessionData);
           
+          this.logger.info(`Recovered unfinished session ${sessionData.id}, duration: ${sessionData.totalDuration}s`);
+          
+          // Add a small delay to ensure the backend has started
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
           if (this.isOnline) {
-            await this.sendSessionToBackend(payload);
+            try {
+              this.logger.info(`Sending recovered session ${sessionData.id} to backend`);
+              await this.sendSessionToBackend(payload);
+              this.logger.info(`Successfully sent recovered session ${sessionData.id}`);
+            } catch (error) {
+              this.logger.error(`Failed to send recovered session, queueing for later: ${error}`);
+              this.queueOfflineSession(payload);
+            }
           } else {
+            this.logger.info(`Offline, queueing recovered session ${sessionData.id} for later sync`);
             this.queueOfflineSession(payload);
           }
           
           // Remove the recovered session file
-          fs.unlinkSync(currentSessionPath);
-          
-          this.logger.info(`Recovered and sent unfinished session ${sessionData.id}, duration: ${sessionData.totalDuration}s`);
+          try {
+            fs.unlinkSync(currentSessionPath);
+          } catch (e) {
+            this.logger.error(`Failed to delete recovered session file: ${e}`);
+          }
         } catch (error) {
           this.logger.error(`Failed to recover unfinished session: ${error}`);
           
@@ -130,7 +145,7 @@ export class SessionManager {
           try {
             fs.unlinkSync(currentSessionPath);
           } catch (e) {
-            // Ignore errors when deleting
+            this.logger.error(`Failed to delete corrupted session file: ${e}`);
           }
         }
       }
@@ -145,7 +160,7 @@ export class SessionManager {
   private setupAutoSave(): void {
     // Save current session state periodically
     setInterval(() => {
-      this.saveCurrentSession();
+      this.saveCurrentSession(false, false);
     }, 10000); // Every 10 seconds
     
     // Register for VS Code exit event if possible
@@ -153,59 +168,21 @@ export class SessionManager {
       // Use process events to detect shutdown
       process.on('exit', () => {
         this.logger.info('VS Code is shutting down, saving current session');
-        this.saveCurrentSession(true);
+        this.saveCurrentSession(true, true);
       });
       
       process.on('SIGINT', () => {
         this.logger.info('VS Code is being interrupted, saving current session');
-        this.saveCurrentSession(true);
+        this.saveCurrentSession(true, true);
       });
       
       process.on('SIGTERM', () => {
         this.logger.info('VS Code is being terminated, saving current session');
-        this.saveCurrentSession(true);
+        this.saveCurrentSession(true, true);
       });
     }
   }
   
-  /**
-   * Save current session to disk for recovery in case of unexpected shutdown
-   */
-  private saveCurrentSession(isShutdown: boolean = false): void {
-    if (!this.currentSession) {
-      return;
-    }
-    
-    try {
-      const currentSessionPath = path.join(this.offlineStoragePath, 'current_session.json');
-      fs.writeFileSync(currentSessionPath, JSON.stringify(this.currentSession, null, 2));
-      
-      if (isShutdown && this.currentSession) {
-        // If VS Code is shutting down, ensure we queue or send the current session
-        const now = Date.now();
-        this.currentSession.endTime = now;
-        this.currentSession.totalDuration = Math.floor((now - this.currentSession.startTime) / 1000);
-        
-        const payload = this.prepareActivityPayload(this.currentSession);
-        
-        if (this.isOnline) {
-          // Try to send synchronously
-          try {
-            // Use axios directly instead of fetch
-            this.api.sendSessionData(payload);
-          } catch (e) {
-            // If send fails, just queue it - it will be recovered on next startup
-            this.queueOfflineSession(payload);
-          }
-        } else {
-          this.queueOfflineSession(payload);
-        }
-      }
-    } catch (error) {
-      this.logger.error(`Failed to save current session: ${error}`);
-    }
-  }
-
   /**
    * Start a new coding session
    */
@@ -283,6 +260,7 @@ export class SessionManager {
     if (!this.isOnline) {
       this.queueOfflineSession(payload);
     } else {
+      this.logger.info(`Sending final session data to backend for ${this.currentSession.id}`);
       this.sendSessionToBackend(payload)
         .catch(error => {
           this.logger.error(`Failed to send session to backend, queueing for later: ${error}`);
@@ -422,7 +400,7 @@ export class SessionManager {
   }
 
   /**
-   * Start heartbeat timer to update session periodically
+   * Start heartbeat timer to update session periodically - only local updates
    */
   private startHeartbeatTimer(): void {
     if (this.heartbeatTimer) {
@@ -430,8 +408,36 @@ export class SessionManager {
     }
     
     this.heartbeatTimer = setInterval(() => {
-      this.sendHeartbeat();
+      this.updateLocalSessionState();
     }, this.HEARTBEAT_INTERVAL);
+  }
+  
+  /**
+   * Update local session state without sending any data to backend
+   */
+  private updateLocalSessionState(): void {
+    if (!this.currentSession || this.currentSession.idle) {
+      return;
+    }
+    
+    // Calculate current duration
+    const currentDuration = Math.floor((Date.now() - this.currentSession.startTime) / 1000);
+    
+    // Update session duration
+    this.currentSession.totalDuration = currentDuration;
+    
+    // Only log in debug mode to reduce noise
+    this.logger.debug(`Session local update: ${this.currentSession.id}, duration: ${currentDuration}s`);
+    
+    // Check if we need to end the session due to long inactivity
+    const inactivityTime = Date.now() - this.currentSession.lastActive;
+    if (inactivityTime > this.INACTIVITY_TIMEOUT) {
+      this.logger.debug(`Ending session due to inactivity (${Math.floor(inactivityTime/1000)}s)`);
+      this.endSession();
+    }
+    
+    // Save current session state locally only
+    this.saveCurrentSession(false, false);
   }
   
   /**
@@ -458,7 +464,7 @@ export class SessionManager {
     const now = Date.now();
     const timeSinceLastSync = now - this.lastSyncTime;
     
-    // Only sync if it's been 10 minutes since last sync and there are updates
+    // Only sync if it's been 10 minutes since last sync and there are meaningful updates
     if (timeSinceLastSync >= this.PERIODIC_SYNC_INTERVAL && this.pendingSessionUpdate) {
       this.logger.info(`Performing 10-minute periodic sync for session ${this.currentSession.id}`);
       
@@ -485,36 +491,51 @@ export class SessionManager {
           .catch(error => {
             this.logger.error(`Failed to send periodic session update: ${error}`);
           });
+      } else {
+        // If offline, queue the session update and reset the flag
+        this.queueOfflineSession(payload);
+        this.lastSyncTime = now;
+        this.pendingSessionUpdate = false;
       }
     }
   }
 
   /**
-   * Send a heartbeat to update the session state locally (not to backend)
+   * Save current session to disk for recovery in case of unexpected shutdown
    */
-  private sendHeartbeat(): void {
-    if (!this.currentSession || this.currentSession.idle) {
+  private saveCurrentSession(isShutdown: boolean = false, shouldSendToBackend: boolean = false): void {
+    if (!this.currentSession) {
       return;
     }
     
-    // Calculate current duration
-    const currentDuration = Math.floor((Date.now() - this.currentSession.startTime) / 1000);
-    
-    // Update session duration
-    this.currentSession.totalDuration = currentDuration;
-    
-    // Log heartbeat only in debug mode
-    this.logger.debug(`Session heartbeat: ${this.currentSession.id}, duration: ${currentDuration}s`);
-    
-    // Check if we need to end the session due to long inactivity
-    const inactivityTime = Date.now() - this.currentSession.lastActive;
-    if (inactivityTime > this.INACTIVITY_TIMEOUT) {
-      this.logger.debug(`Ending session due to inactivity (${Math.floor(inactivityTime/1000)}s)`);
-      this.endSession();
+    try {
+      const currentSessionPath = path.join(this.offlineStoragePath, 'current_session.json');
+      fs.writeFileSync(currentSessionPath, JSON.stringify(this.currentSession, null, 2));
+      
+      if ((isShutdown || shouldSendToBackend) && this.currentSession) {
+        // If VS Code is shutting down or we explicitly want to send to backend
+        const now = Date.now();
+        this.currentSession.endTime = now;
+        this.currentSession.totalDuration = Math.floor((now - this.currentSession.startTime) / 1000);
+        
+        const payload = this.prepareActivityPayload(this.currentSession);
+        
+        if (this.isOnline) {
+          // Try to send data
+          try {
+            // Use axios directly instead of fetch
+            this.api.sendSessionData(payload);
+          } catch (e) {
+            // If send fails, just queue it - it will be recovered on next startup
+            this.queueOfflineSession(payload);
+          }
+        } else {
+          this.queueOfflineSession(payload);
+        }
+      }
+    } catch (error) {
+      this.logger.error(`Failed to save current session: ${error}`);
     }
-    
-    // Save current session state but don't send to backend
-    this.saveCurrentSession();
   }
 
   /**

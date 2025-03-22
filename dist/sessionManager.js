@@ -46,13 +46,17 @@ class SessionManager {
         this.inactivityTimer = null;
         this.offlineQueue = [];
         this.INACTIVITY_TIMEOUT = 7 * 60 * 1000; // 7 minutes in milliseconds
+        this.PERIODIC_SYNC_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
         this.HEARTBEAT_INTERVAL = 30 * 1000; // 30 seconds in milliseconds
         this.heartbeatTimer = null;
+        this.periodicSyncTimer = null;
         this.isOnline = true;
         this.subscriptions = [];
         this.lastActiveFile = null;
         this.keystrokeCount = 0;
         this.sessionId = '';
+        this.lastSyncTime = 0;
+        this.pendingSessionUpdate = false;
         // Create offline storage directory
         this.offlineStoragePath = path.join(os.homedir(), '.codingcam', 'offline-sessions');
         if (!fs.existsSync(this.offlineStoragePath)) {
@@ -62,6 +66,8 @@ class SessionManager {
         this.loadOfflineSessions();
         // Setup event handlers
         this.setupEventHandlers();
+        // Setup auto-save for unexpected shutdowns
+        this.setupAutoSave();
     }
     /**
      * Initialize the session manager
@@ -70,6 +76,91 @@ class SessionManager {
         this.logger.info('Initializing Session Manager');
         this.checkConnectionStatus();
         this.syncOfflineSessions();
+        // Check for unfinished sessions from previous runs
+        this.recoverUnfinishedSessions();
+    }
+    /**
+     * Look for any unfinished sessions from previous runs
+     */
+    async recoverUnfinishedSessions() {
+        try {
+            const currentSessionPath = path.join(this.offlineStoragePath, 'current_session.json');
+            if (fs.existsSync(currentSessionPath)) {
+                this.logger.info('Found unfinished session from previous run, recovering');
+                try {
+                    const content = fs.readFileSync(currentSessionPath, 'utf8');
+                    const sessionData = JSON.parse(content);
+                    // Mark the session as ended at the time of the last save
+                    sessionData.endTime = sessionData.lastActive;
+                    sessionData.totalDuration = Math.floor((sessionData.lastActive - sessionData.startTime) / 1000);
+                    // Prepare session payload
+                    const payload = this.prepareActivityPayload(sessionData);
+                    this.logger.info(`Recovered unfinished session ${sessionData.id}, duration: ${sessionData.totalDuration}s`);
+                    // Add a small delay to ensure the backend has started
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    if (this.isOnline) {
+                        try {
+                            this.logger.info(`Sending recovered session ${sessionData.id} to backend`);
+                            await this.sendSessionToBackend(payload);
+                            this.logger.info(`Successfully sent recovered session ${sessionData.id}`);
+                        }
+                        catch (error) {
+                            this.logger.error(`Failed to send recovered session, queueing for later: ${error}`);
+                            this.queueOfflineSession(payload);
+                        }
+                    }
+                    else {
+                        this.logger.info(`Offline, queueing recovered session ${sessionData.id} for later sync`);
+                        this.queueOfflineSession(payload);
+                    }
+                    // Remove the recovered session file
+                    try {
+                        fs.unlinkSync(currentSessionPath);
+                    }
+                    catch (e) {
+                        this.logger.error(`Failed to delete recovered session file: ${e}`);
+                    }
+                }
+                catch (error) {
+                    this.logger.error(`Failed to recover unfinished session: ${error}`);
+                    // If recovery fails, just delete the file to avoid future issues
+                    try {
+                        fs.unlinkSync(currentSessionPath);
+                    }
+                    catch (e) {
+                        this.logger.error(`Failed to delete corrupted session file: ${e}`);
+                    }
+                }
+            }
+        }
+        catch (error) {
+            this.logger.error(`Error recovering unfinished sessions: ${error}`);
+        }
+    }
+    /**
+     * Setup auto-save to handle unexpected shutdowns
+     */
+    setupAutoSave() {
+        // Save current session state periodically
+        setInterval(() => {
+            this.saveCurrentSession(false, false);
+        }, 10000); // Every 10 seconds
+        // Register for VS Code exit event if possible
+        if (vscode.workspace) {
+            // Use process events to detect shutdown
+            process.on('exit', () => {
+                this.logger.info('VS Code is shutting down, saving current session');
+                this.saveCurrentSession(true, true);
+            });
+            process.on('SIGINT', () => {
+                this.logger.info('VS Code is being interrupted, saving current session');
+                this.saveCurrentSession(true, true);
+            });
+            process.on('SIGTERM', () => {
+                this.logger.info('VS Code is being terminated, saving current session');
+                this.saveCurrentSession(true, true);
+            });
+        }
     }
     /**
      * Start a new coding session
@@ -92,10 +183,15 @@ class SessionManager {
             isOffline: !this.isOnline
         };
         this.logger.info(`Started new coding session: ${this.sessionId}`);
+        this.lastSyncTime = Date.now();
         // Start the heartbeat timer to periodically update the session
         this.startHeartbeatTimer();
+        // Start periodic sync timer
+        this.startPeriodicSyncTimer();
         // Reset the inactivity timer
         this.resetInactivityTimer();
+        // Save the session state immediately
+        this.saveCurrentSession();
     }
     /**
      * End the current session and send to backend
@@ -117,6 +213,10 @@ class SessionManager {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
+        if (this.periodicSyncTimer) {
+            clearInterval(this.periodicSyncTimer);
+            this.periodicSyncTimer = null;
+        }
         // Prepare session for sending to backend
         const payload = this.prepareActivityPayload(this.currentSession);
         // If offline, queue the session, otherwise send it
@@ -124,12 +224,28 @@ class SessionManager {
             this.queueOfflineSession(payload);
         }
         else {
-            this.sendSessionToBackend(payload);
+            this.logger.info(`Sending final session data to backend for ${this.currentSession.id}`);
+            this.sendSessionToBackend(payload)
+                .catch(error => {
+                this.logger.error(`Failed to send session to backend, queueing for later: ${error}`);
+                this.queueOfflineSession(payload);
+            });
+        }
+        // Clean up the current session file
+        try {
+            const currentSessionPath = path.join(this.offlineStoragePath, 'current_session.json');
+            if (fs.existsSync(currentSessionPath)) {
+                fs.unlinkSync(currentSessionPath);
+            }
+        }
+        catch (e) {
+            // Ignore errors when deleting
         }
         // Clear current session
         this.currentSession = null;
         this.keystrokeCount = 0;
         this.lastActiveFile = null;
+        this.pendingSessionUpdate = false;
     }
     /**
      * Record activity in the current file
@@ -159,6 +275,7 @@ class SessionManager {
         // Record an edit if it's a write operation
         if (isWrite) {
             this.currentSession.files[filePath].edits++;
+            this.pendingSessionUpdate = true;
         }
         // Update language breakdown
         if (!this.currentSession.languageBreakdown[language]) {
@@ -174,6 +291,7 @@ class SessionManager {
                 // Add to language breakdown
                 const lastFileLanguage = this.currentSession.files[this.lastActiveFile].language;
                 this.currentSession.languageBreakdown[lastFileLanguage] += timeSinceLastFile;
+                this.pendingSessionUpdate = true;
             }
             this.lastActiveFile = filePath;
         }
@@ -193,6 +311,7 @@ class SessionManager {
         if (this.currentSession.files[filePath]) {
             this.currentSession.files[filePath].keystrokes++;
             this.keystrokeCount++;
+            this.pendingSessionUpdate = true;
         }
     }
     /**
@@ -219,20 +338,20 @@ class SessionManager {
         }, this.INACTIVITY_TIMEOUT);
     }
     /**
-     * Start heartbeat timer to update session periodically
+     * Start heartbeat timer to update session periodically - only local updates
      */
     startHeartbeatTimer() {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
         }
         this.heartbeatTimer = setInterval(() => {
-            this.sendHeartbeat();
+            this.updateLocalSessionState();
         }, this.HEARTBEAT_INTERVAL);
     }
     /**
-     * Send a heartbeat to update the session
+     * Update local session state without sending any data to backend
      */
-    sendHeartbeat() {
+    updateLocalSessionState() {
         if (!this.currentSession || this.currentSession.idle) {
             return;
         }
@@ -240,13 +359,103 @@ class SessionManager {
         const currentDuration = Math.floor((Date.now() - this.currentSession.startTime) / 1000);
         // Update session duration
         this.currentSession.totalDuration = currentDuration;
-        // Log heartbeat
-        this.logger.debug(`Session heartbeat: ${this.currentSession.id}, duration: ${currentDuration}s`);
+        // Only log in debug mode to reduce noise
+        this.logger.debug(`Session local update: ${this.currentSession.id}, duration: ${currentDuration}s`);
         // Check if we need to end the session due to long inactivity
         const inactivityTime = Date.now() - this.currentSession.lastActive;
         if (inactivityTime > this.INACTIVITY_TIMEOUT) {
             this.logger.debug(`Ending session due to inactivity (${Math.floor(inactivityTime / 1000)}s)`);
             this.endSession();
+        }
+        // Save current session state locally only
+        this.saveCurrentSession(false, false);
+    }
+    /**
+     * Start periodic sync timer to send session updates every 10 minutes
+     */
+    startPeriodicSyncTimer() {
+        if (this.periodicSyncTimer) {
+            clearInterval(this.periodicSyncTimer);
+        }
+        this.periodicSyncTimer = setInterval(() => {
+            this.periodicSessionSync();
+        }, this.PERIODIC_SYNC_INTERVAL);
+    }
+    /**
+     * Send session update to backend every 10 minutes
+     */
+    periodicSessionSync() {
+        if (!this.currentSession || this.currentSession.idle || !this.pendingSessionUpdate) {
+            return;
+        }
+        const now = Date.now();
+        const timeSinceLastSync = now - this.lastSyncTime;
+        // Only sync if it's been 10 minutes since last sync and there are meaningful updates
+        if (timeSinceLastSync >= this.PERIODIC_SYNC_INTERVAL && this.pendingSessionUpdate) {
+            this.logger.info(`Performing 10-minute periodic sync for session ${this.currentSession.id}`);
+            // Create a snapshot of the current session
+            const sessionSnapshot = {
+                ...this.currentSession,
+                endTime: now, // Set temporary end time
+                totalDuration: Math.floor((now - this.currentSession.startTime) / 1000)
+            };
+            // Prepare and send the snapshot
+            const payload = this.prepareActivityPayload(sessionSnapshot);
+            // Add a flag to indicate this is a periodic update
+            payload.is_periodic_update = true;
+            if (this.isOnline) {
+                this.sendSessionToBackend(payload)
+                    .then(() => {
+                    this.logger.info(`Successfully sent periodic session update for ${this.currentSession.id}`);
+                    this.lastSyncTime = now;
+                    this.pendingSessionUpdate = false;
+                })
+                    .catch(error => {
+                    this.logger.error(`Failed to send periodic session update: ${error}`);
+                });
+            }
+            else {
+                // If offline, queue the session update and reset the flag
+                this.queueOfflineSession(payload);
+                this.lastSyncTime = now;
+                this.pendingSessionUpdate = false;
+            }
+        }
+    }
+    /**
+     * Save current session to disk for recovery in case of unexpected shutdown
+     */
+    saveCurrentSession(isShutdown = false, shouldSendToBackend = false) {
+        if (!this.currentSession) {
+            return;
+        }
+        try {
+            const currentSessionPath = path.join(this.offlineStoragePath, 'current_session.json');
+            fs.writeFileSync(currentSessionPath, JSON.stringify(this.currentSession, null, 2));
+            if ((isShutdown || shouldSendToBackend) && this.currentSession) {
+                // If VS Code is shutting down or we explicitly want to send to backend
+                const now = Date.now();
+                this.currentSession.endTime = now;
+                this.currentSession.totalDuration = Math.floor((now - this.currentSession.startTime) / 1000);
+                const payload = this.prepareActivityPayload(this.currentSession);
+                if (this.isOnline) {
+                    // Try to send data
+                    try {
+                        // Use axios directly instead of fetch
+                        this.api.sendSessionData(payload);
+                    }
+                    catch (e) {
+                        // If send fails, just queue it - it will be recovered on next startup
+                        this.queueOfflineSession(payload);
+                    }
+                }
+                else {
+                    this.queueOfflineSession(payload);
+                }
+            }
+        }
+        catch (error) {
+            this.logger.error(`Failed to save current session: ${error}`);
         }
     }
     /**
@@ -275,8 +484,8 @@ class SessionManager {
                 this.logger.info('Connection to backend lost, activating offline mode');
             }
         }
-        // Check again in 1 minute
-        setTimeout(() => this.checkConnectionStatus(), 60000);
+        // Check again in 5 minutes (reduced from every minute)
+        setTimeout(() => this.checkConnectionStatus(), 5 * 60 * 1000);
     }
     /**
      * Queue a session for offline storage
@@ -308,7 +517,7 @@ class SessionManager {
             }
             const files = fs.readdirSync(this.offlineStoragePath);
             for (const file of files) {
-                if (file.endsWith('.json')) {
+                if (file.endsWith('.json') && file !== 'current_session.json') {
                     try {
                         const filePath = path.join(this.offlineStoragePath, file);
                         const content = fs.readFileSync(filePath, 'utf8');
@@ -353,7 +562,12 @@ class SessionManager {
             }
             catch (error) {
                 this.logger.error(`Failed to sync offline session ${session.session_id}: ${error}`);
-                // Stop trying to sync if we have a connection error
+                // If we get a 500 error, log details but continue with next session
+                if (error instanceof Error && error.message.includes('500')) {
+                    this.logger.error(`Backend server error (500) when syncing session ${session.session_id}`);
+                    continue;
+                }
+                // For other errors, stop trying to sync
                 break;
             }
         }
@@ -363,9 +577,32 @@ class SessionManager {
      */
     async sendSessionToBackend(payload) {
         try {
-            // We'll implement this in the API class
-            await this.api.sendSessionData(payload);
-            this.logger.info(`Sent session ${payload.session_id} to backend`);
+            // Make a few retries in case of server errors
+            let retries = 3;
+            let success = false;
+            while (retries > 0 && !success) {
+                try {
+                    await this.api.sendSessionData(payload);
+                    success = true;
+                    this.logger.info(`Sent session ${payload.session_id} to backend`);
+                }
+                catch (error) {
+                    retries--;
+                    // If we got a 500 error, it might be temporary, so retry
+                    if (error instanceof Error && error.message.includes('500')) {
+                        // Wait a bit before retrying
+                        this.logger.warn(`Got 500 error, retrying... (${retries} attempts left)`);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                    else {
+                        // For other errors, don't retry
+                        throw error;
+                    }
+                }
+            }
+            if (!success) {
+                throw new Error(`Failed to send session after ${3 - retries} retries`);
+            }
         }
         catch (error) {
             this.logger.error(`Failed to send session to backend: ${error}`);
@@ -407,7 +644,7 @@ class SessionManager {
         // so we'll use a periodic check for network connectivity
         setInterval(() => {
             this.checkConnectionStatus();
-        }, 60000); // Check every minute
+        }, 5 * 60 * 1000); // Check every 5 minutes (reduced from every minute)
         // Listen for text document changes
         this.subscriptions.push(vscode.workspace.onDidChangeTextDocument(event => {
             if (event.document && event.contentChanges.length > 0) {
@@ -425,8 +662,15 @@ class SessionManager {
                 this.recordActivity(filePath, editor.document.languageId, editor.document.lineCount);
             }
         }));
-        // Listen for text selection changes
+        // Only track significant selection changes to reduce overhead
+        let lastSelectionChangeTime = 0;
+        const SELECTION_CHANGE_THROTTLE = 2000; // 2 seconds
         this.subscriptions.push(vscode.window.onDidChangeTextEditorSelection(event => {
+            const now = Date.now();
+            if (now - lastSelectionChangeTime < SELECTION_CHANGE_THROTTLE) {
+                return; // Skip if changed recently
+            }
+            lastSelectionChangeTime = now;
             if (event.textEditor && event.textEditor.document) {
                 const filePath = event.textEditor.document.uri.fsPath;
                 this.recordActivity(filePath, event.textEditor.document.languageId, event.textEditor.document.lineCount);
@@ -447,6 +691,10 @@ class SessionManager {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
+        }
+        if (this.periodicSyncTimer) {
+            clearInterval(this.periodicSyncTimer);
+            this.periodicSyncTimer = null;
         }
         // Dispose of all subscriptions
         this.subscriptions.forEach(sub => sub.dispose());
