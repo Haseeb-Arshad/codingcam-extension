@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import axios from 'axios';
 import * as os from 'os';
 import { Logger } from './logger';
+import { ActivityPayload } from './sessionManager';
 
 export class CodingCamBackendApi {
   private apiUrl: string;
@@ -43,6 +44,39 @@ export class CodingCamBackendApi {
     } catch (error) {
       this.logger.error(`API key validation error: ${error}`);
       return false;
+    }
+  }
+
+  // Send a coding session to the backend
+  async sendSessionData(sessionData: ActivityPayload): Promise<void> {
+    if (!this.apiKey) {
+      this.logger.warn('API key not set. Please login or register first.');
+      throw new Error('API key not set. Please login or register first.');
+    }
+
+    try {
+      this.logger.debug(`Sending session data: ${JSON.stringify(sessionData)}`);
+      
+      const response = await axios.post(`${this.apiUrl}/extension/sessions`, sessionData, {
+        headers: {
+          'X-API-Key': this.apiKey,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      this.logger.debug(`Session data response: ${response.status} ${response.statusText}`);
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        this.logger.error(`API Error: ${error.message}`);
+        this.logger.error(`Request URL: ${error.config?.url}`);
+        if (error.response?.data) {
+          this.logger.error(`Response: ${JSON.stringify(error.response.data)}`);
+        }
+        this.logger.error(`Status: ${error.response?.status}`);
+      } else {
+        this.logger.error(`Unknown error: ${error}`);
+      }
+      throw error;
     }
   }
 

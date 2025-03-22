@@ -8,6 +8,7 @@ import { Desktop } from './desktop';
 import { Logger } from './logger';
 import { Utils } from './utils';
 import { CodingCamBackendApi } from './api';
+import { SessionManager } from './sessionManager';
 
 interface FileSelection {
   selection: vscode.Position;
@@ -50,6 +51,7 @@ export class CodingCam {
   private lastApiKeyPrompted: number = 0;
   private isMetricsEnabled: boolean = false;
   private api: CodingCamBackendApi;
+  private sessionManager: SessionManager | null = null;
 
   constructor(extensionPath: string, logger: Logger, api: CodingCamBackendApi) {
     this.extensionPath = extensionPath;
@@ -81,12 +83,22 @@ export class CodingCam {
           }
 
           this.initializeDependencies();
+          
+          // Initialize session manager
+          this.sessionManager = new SessionManager(this.logger, this.api);
+          this.sessionManager.initialize();
         });
       });
     });
   }
 
   public dispose() {
+    // Dispose session manager if it exists
+    if (this.sessionManager) {
+      this.sessionManager.dispose();
+      this.sessionManager = null;
+    }
+    
     this.statusBar?.dispose();
     this.statusBarTeamYou?.dispose();
     this.statusBarTeamOther?.dispose();
@@ -577,6 +589,16 @@ export class CodingCam {
     }
 
     const project = this.getProjectName(doc.uri);
+    
+    // Also record in session manager
+    if (this.sessionManager) {
+      this.sessionManager.recordActivity(
+        file,
+        doc.languageId,
+        doc.lineCount,
+        isWrite
+      );
+    }
     
     try {
       await this.api.sendHeartbeat({

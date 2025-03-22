@@ -42,9 +42,8 @@ const constants_1 = require("./constants");
 const options_1 = require("./options");
 const desktop_1 = require("./desktop");
 const utils_1 = require("./utils");
-const api_1 = require("./api");
 class CodingCam {
-    constructor(extensionPath, logger) {
+    constructor(extensionPath, logger, api) {
         this.agentName = '';
         this.statusBar = undefined;
         this.statusBarTeamYou = undefined;
@@ -72,9 +71,9 @@ class CodingCam {
         this.isMetricsEnabled = false;
         this.extensionPath = extensionPath;
         this.logger = logger;
+        this.api = api;
         this.setResourcesLocation();
         this.options = new options_1.Options(logger, this.resourcesLocation);
-        this.api = new api_1.CodingCamBackendApi();
     }
     initialize() {
         this.options.getSetting('settings', 'debug', false, (setting) => {
@@ -223,6 +222,16 @@ class CodingCam {
             if (!invalid) {
                 await vscode.workspace.getConfiguration().update('codingcam.apiKey', val, true);
                 this.options.setSetting('settings', 'api_key', val, false);
+                // Update API with the new key
+                this.api.updateApiKey(val);
+                // Verify the key
+                const isValid = await this.api.validateApiKey(val);
+                if (isValid) {
+                    vscode.window.showInformationMessage('API key validated successfully');
+                }
+                else {
+                    vscode.window.showWarningMessage('API key saved, but could not be validated. Please verify it is correct.');
+                }
             }
             else {
                 vscode.window.setStatusBarMessage(invalid);

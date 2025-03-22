@@ -41,49 +41,78 @@ const vscode = __importStar(require("vscode"));
 const axios_1 = __importDefault(require("axios"));
 const os = __importStar(require("os"));
 class CodingCamBackendApi {
-    constructor() {
-        // Get API URL from settings with localhost as default
+    constructor(logger) {
+        // Get API URL and key from settings with localhost as default
         const config = vscode.workspace.getConfiguration('codingcam');
         this.apiUrl = config.get('apiUrl') || 'http://localhost:3001/api';
-        this.token = config.get('apiKey');
-        console.log('CodingCam API initialized with URL:', this.apiUrl);
+        this.apiKey = config.get('apiKey');
+        this.logger = logger;
+        this.logger.info('CodingCam API initialized with URL: ' + this.apiUrl);
+    }
+    // Update the API key when it changes
+    updateApiKey(apiKey) {
+        this.apiKey = apiKey;
+        this.logger.info('API key updated');
+    }
+    // Get current API key
+    getApiKey() {
+        return this.apiKey;
+    }
+    // Check if the API key is valid
+    async validateApiKey(apiKey) {
+        try {
+            const response = await axios_1.default.get(`${this.apiUrl}/auth/verify-api-key`, {
+                headers: {
+                    'X-API-Key': apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return response.data?.valid === true;
+        }
+        catch (error) {
+            this.logger.error(`API key validation error: ${error}`);
+            return false;
+        }
     }
     async sendHeartbeat(data) {
-        if (!this.token) {
-            console.log('CodingCam API key not set');
+        if (!this.apiKey) {
+            this.logger.warn('API key not set. Please login or register first.');
             throw new Error('API key not set. Please login or register first.');
         }
         try {
             const payload = {
-                project_name: data.project,
-                language_name: data.language,
+                project_name: data.project || '',
+                language_name: data.language || '',
                 editor: 'vscode',
                 platform: os.platform(),
                 file_path: data.entity,
-                line_count: data.lines,
-                cursor_position: data.cursorpos,
+                line_count: data.lines || 0,
+                cursor_position: data.cursorpos || 0,
                 duration_seconds: 0, // Will be calculated on the server
                 started_at: new Date(data.time * 1000).toISOString(),
                 ended_at: new Date(data.time * 1000).toISOString() // Same as started_at for heartbeats
             };
-            console.log('Sending heartbeat payload:', JSON.stringify(payload));
-            const response = await axios_1.default.post(`${this.apiUrl}/activities`, payload, {
+            this.logger.debug(`Sending heartbeat payload: ${JSON.stringify(payload)}`);
+            // Use the correct API endpoint for heartbeats
+            const response = await axios_1.default.post(`${this.apiUrl}/extension/heartbeat`, payload, {
                 headers: {
-                    'Authorization': `Bearer ${this.token}`,
+                    'X-API-Key': this.apiKey,
                     'Content-Type': 'application/json'
                 }
             });
-            console.log('Heartbeat response:', response.status, response.statusText);
+            this.logger.debug(`Heartbeat response: ${response.status} ${response.statusText}`);
         }
         catch (error) {
             if (axios_1.default.isAxiosError(error)) {
-                console.error('API Error:', error.message);
-                console.error('Request URL:', error.config?.url);
-                console.error('Response:', error.response?.data);
-                console.error('Status:', error.response?.status);
+                this.logger.error(`API Error: ${error.message}`);
+                this.logger.error(`Request URL: ${error.config?.url}`);
+                if (error.response?.data) {
+                    this.logger.error(`Response: ${JSON.stringify(error.response.data)}`);
+                }
+                this.logger.error(`Status: ${error.response?.status}`);
             }
             else {
-                console.error('Unknown error:', error);
+                this.logger.error(`Unknown error: ${error}`);
             }
             throw error;
         }
@@ -94,13 +123,16 @@ class CodingCamBackendApi {
                 email,
                 password
             });
-            if (response.data && response.data.token) {
-                return response.data.token;
+            if (response.data && response.data.token && response.data.apiKey) {
+                return {
+                    token: response.data.token,
+                    apiKey: response.data.apiKey
+                };
             }
             return null;
         }
         catch (error) {
-            console.error('Login error:', error);
+            this.logger.error(`Login error: ${error}`);
             return null;
         }
     }
@@ -112,14 +144,36 @@ class CodingCamBackendApi {
                 username,
                 fullName
             });
-            if (response.data && response.data.token) {
-                return response.data.token;
+            if (response.data && response.data.token && response.data.apiKey) {
+                return {
+                    token: response.data.token,
+                    apiKey: response.data.apiKey
+                };
             }
             return null;
         }
         catch (error) {
-            console.error('Registration error:', error);
+            this.logger.error(`Registration error: ${error}`);
             return null;
+        }
+    }
+    // Verify the extension's connection with the backend
+    async verifyConnection() {
+        if (!this.apiKey) {
+            return false;
+        }
+        try {
+            const response = await axios_1.default.get(`${this.apiUrl}/extension/status`, {
+                headers: {
+                    'X-API-Key': this.apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+            return response.data?.status === 'ok';
+        }
+        catch (error) {
+            this.logger.error(`Connection verification error: ${error}`);
+            return false;
         }
     }
 }
