@@ -74,6 +74,37 @@ class CodingCamBackendApi {
             return false;
         }
     }
+    // Send a coding session to the backend
+    async sendSessionData(sessionData) {
+        if (!this.apiKey) {
+            this.logger.warn('API key not set. Please login or register first.');
+            throw new Error('API key not set. Please login or register first.');
+        }
+        try {
+            this.logger.debug(`Sending session data: ${JSON.stringify(sessionData)}`);
+            const response = await axios_1.default.post(`${this.apiUrl}/extension/sessions`, sessionData, {
+                headers: {
+                    'X-API-Key': this.apiKey,
+                    'Content-Type': 'application/json'
+                }
+            });
+            this.logger.debug(`Session data response: ${response.status} ${response.statusText}`);
+        }
+        catch (error) {
+            if (axios_1.default.isAxiosError(error)) {
+                this.logger.error(`API Error: ${error.message}`);
+                this.logger.error(`Request URL: ${error.config?.url}`);
+                if (error.response?.data) {
+                    this.logger.error(`Response: ${JSON.stringify(error.response.data)}`);
+                }
+                this.logger.error(`Status: ${error.response?.status}`);
+            }
+            else {
+                this.logger.error(`Unknown error: ${error}`);
+            }
+            throw error;
+        }
+    }
     async sendHeartbeat(data) {
         if (!this.apiKey) {
             this.logger.warn('API key not set. Please login or register first.');

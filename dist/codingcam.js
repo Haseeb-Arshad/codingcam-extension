@@ -42,6 +42,7 @@ const constants_1 = require("./constants");
 const options_1 = require("./options");
 const desktop_1 = require("./desktop");
 const utils_1 = require("./utils");
+const sessionManager_1 = require("./sessionManager");
 class CodingCam {
     constructor(extensionPath, logger, api) {
         this.agentName = '';
@@ -69,6 +70,7 @@ class CodingCam {
         this.resourcesLocation = '';
         this.lastApiKeyPrompted = 0;
         this.isMetricsEnabled = false;
+        this.sessionManager = null;
         this.extensionPath = extensionPath;
         this.logger = logger;
         this.api = api;
@@ -94,11 +96,19 @@ class CodingCam {
                         return;
                     }
                     this.initializeDependencies();
+                    // Initialize session manager
+                    this.sessionManager = new sessionManager_1.SessionManager(this.logger, this.api);
+                    this.sessionManager.initialize();
                 });
             });
         });
     }
     dispose() {
+        // Dispose session manager if it exists
+        if (this.sessionManager) {
+            this.sessionManager.dispose();
+            this.sessionManager = null;
+        }
         this.statusBar?.dispose();
         this.statusBarTeamYou?.dispose();
         this.statusBarTeamOther?.dispose();
@@ -524,6 +534,10 @@ class CodingCam {
             category = 'code reviewing';
         }
         const project = this.getProjectName(doc.uri);
+        // Also record in session manager
+        if (this.sessionManager) {
+            this.sessionManager.recordActivity(file, doc.languageId, doc.lineCount, isWrite);
+        }
         try {
             await this.api.sendHeartbeat({
                 entity: file,

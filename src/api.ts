@@ -55,24 +55,80 @@ export class CodingCamBackendApi {
     }
 
     try {
-      this.logger.debug(`Sending session data: ${JSON.stringify(sessionData)}`);
+      this.logger.debug(`Sending session data to ${this.apiUrl}/extension/sessions`);
       
-      const response = await axios.post(`${this.apiUrl}/extension/sessions`, sessionData, {
-        headers: {
-          'X-API-Key': this.apiKey,
-          'Content-Type': 'application/json'
+      // Verify session data has all required fields before sending
+      if (!sessionData.session_id || !sessionData.start_time || !sessionData.end_time) {
+        throw new Error('Session data missing required fields (session_id, start_time, end_time)');
+      }
+      
+      // Validate date formats
+      const startTime = new Date(sessionData.start_time);
+      const endTime = new Date(sessionData.end_time);
+      
+      if (isNaN(startTime.getTime()) || isNaN(endTime.getTime())) {
+        throw new Error('Invalid date format for start_time or end_time');
+      }
+      
+      // Ensure languages and files are objects, not undefined
+      if (!sessionData.languages) {
+        sessionData.languages = {};
+      }
+      
+      if (!sessionData.files) {
+        sessionData.files = {};
+      }
+      
+      // Send the request with a longer timeout
+      const response = await axios.post(
+        `${this.apiUrl}/extension/sessions`, 
+        sessionData, 
+        {
+          headers: {
+            'X-API-Key': this.apiKey,
+            'Content-Type': 'application/json'
+          },
+          timeout: 10000 // 10 second timeout
         }
-      });
+      );
       
       this.logger.debug(`Session data response: ${response.status} ${response.statusText}`);
     } catch (error) {
       if (axios.isAxiosError(error)) {
         this.logger.error(`API Error: ${error.message}`);
         this.logger.error(`Request URL: ${error.config?.url}`);
-        if (error.response?.data) {
-          this.logger.error(`Response: ${JSON.stringify(error.response.data)}`);
+        
+        // Log detailed information about the response if it exists
+        if (error.response) {
+          this.logger.error(`Status: ${error.response.status} ${error.response.statusText}`);
+          
+          if (error.response.data) {
+            try {
+              const errorData = typeof error.response.data === 'string' 
+                ? error.response.data 
+                : JSON.stringify(error.response.data, null, 2);
+              
+              this.logger.error(`Response data: ${errorData}`);
+            } catch (e: any) {
+              this.logger.error(`Unable to stringify response data: ${e.message}`);
+            }
+          }
+          
+          // Handle specific status codes
+          if (error.response.status === 500) {
+            this.logger.error('Server error (500) occurred when sending session data');
+            this.logger.debug(`Session payload that caused 500 error: ${JSON.stringify(sessionData, null, 2)}`);
+            throw new Error(`Server error (500): ${error.response.data?.message || 'Unknown server error'}`);
+          } else if (error.response.status === 401) {
+            throw new Error('API key invalid or expired. Please login again.');
+          } else if (error.response.status === 400) {
+            throw new Error(`Bad request: ${error.response.data?.message || 'Invalid data format'}`);
+          }
+        } else if (error.request) {
+          // The request was made but no response was received
+          this.logger.error('No response received from server. Network issue or server offline.');
+          throw new Error('No response from server. Check your internet connection.');
         }
-        this.logger.error(`Status: ${error.response?.status}`);
       } else {
         this.logger.error(`Unknown error: ${error}`);
       }
