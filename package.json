@@ -55,6 +55,18 @@
       {
         "command": "codingcam.log_file",
         "title": "CodingCam: Open Log File"
+      },
+      {
+        "command": "codingcam.register",
+        "title": "CodingCam: Register Account"
+      },
+      {
+        "command": "codingcam.login",
+        "title": "CodingCam: Login"
+      },
+      {
+        "command": "codingcam.verify_connection",
+        "title": "CodingCam: Verify Connection"
       }
     ],
     "configuration": {

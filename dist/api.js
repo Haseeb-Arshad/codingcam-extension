@@ -42,15 +42,16 @@ const axios_1 = __importDefault(require("axios"));
 const os = __importStar(require("os"));
 class CodingCamBackendApi {
     constructor() {
-        // Get API URL from settings
+        // Get API URL from settings with localhost as default
         const config = vscode.workspace.getConfiguration('codingcam');
         this.apiUrl = config.get('apiUrl') || 'http://localhost:3001/api';
         this.token = config.get('apiKey');
+        console.log('CodingCam API initialized with URL:', this.apiUrl);
     }
     async sendHeartbeat(data) {
         if (!this.token) {
             console.log('CodingCam API key not set');
-            return;
+            throw new Error('API key not set. Please login or register first.');
         }
         try {
             const payload = {
@@ -65,15 +66,26 @@ class CodingCamBackendApi {
                 started_at: new Date(data.time * 1000).toISOString(),
                 ended_at: new Date(data.time * 1000).toISOString() // Same as started_at for heartbeats
             };
-            await axios_1.default.post(`${this.apiUrl}/activities`, payload, {
+            console.log('Sending heartbeat payload:', JSON.stringify(payload));
+            const response = await axios_1.default.post(`${this.apiUrl}/activities`, payload, {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
                     'Content-Type': 'application/json'
                 }
             });
+            console.log('Heartbeat response:', response.status, response.statusText);
         }
         catch (error) {
-            console.error('Error sending heartbeat to CodingCam backend:', error);
+            if (axios_1.default.isAxiosError(error)) {
+                console.error('API Error:', error.message);
+                console.error('Request URL:', error.config?.url);
+                console.error('Response:', error.response?.data);
+                console.error('Status:', error.response?.status);
+            }
+            else {
+                console.error('Unknown error:', error);
+            }
+            throw error;
         }
     }
     async login(email, password) {

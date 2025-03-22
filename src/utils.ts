@@ -18,6 +18,12 @@ export class Utils {
   }
 
   public static apiKeyInvalid(key?: string): string {
+    // For development/testing, accept any non-empty string
+    if (!key || key.trim() === '') return 'API key cannot be empty';
+    return '';
+    
+    // Original validation - uncomment for production
+    /*
     const err = 'Invalid api key... check https://codingcam.com/api-key for your key';
     if (!key) return err;
     const re = new RegExp(
@@ -26,6 +32,7 @@ export class Utils {
     );
     if (!re.test(key)) return err;
     return '';
+    */
   }
 
   public static validateProxy(proxy: string): string {

@@ -39,9 +39,13 @@ const vscode = __importStar(require("vscode"));
 const constants_1 = require("./constants");
 const logger_1 = require("./logger");
 const codingcam_1 = require("./codingcam");
+const api_1 = require("./api");
+const env_1 = require("./env");
 var logger = new logger_1.Logger(constants_1.LogLevel.INFO);
 var codingcam;
 function activate(ctx) {
+    // Load environment variables
+    (0, env_1.loadEnvironment)(ctx.extensionPath);
     codingcam = new codingcam_1.CodingCam(ctx.extensionPath, logger);
     ctx.globalState?.setKeysForSync(['codingcam.apiKey']);
     ctx.subscriptions.push(vscode.commands.registerCommand(constants_1.COMMAND_API_KEY, function () {
@@ -73,6 +77,65 @@ function activate(ctx) {
     }));
     ctx.subscriptions.push(vscode.commands.registerCommand(constants_1.COMMAND_LOG_FILE, function () {
         codingcam.openLogFile();
+    }));
+    ctx.subscriptions.push(vscode.commands.registerCommand('codingcam.register', async function () {
+        // Show registration form
+        const email = await vscode.window.showInputBox({
+            prompt: 'Enter your email',
+            placeHolder: 'email@example.com'
+        });
+        if (!email)
+            return;
+        const password = await vscode.window.showInputBox({
+            prompt: 'Create a password',
+            password: true
+        });
+        if (!password)
+            return;
+        const username = await vscode.window.showInputBox({
+            prompt: 'Choose a username',
+        });
+        if (!username)
+            return;
+        // Register user
+        const api = new api_1.CodingCamBackendApi();
+        const token = await api.register(email, password, username);
+        if (token) {
+            // Save token
+            await vscode.workspace.getConfiguration().update('codingcam.apiKey', token, true);
+            vscode.window.showInformationMessage('Registration successful!');
+            codingcam.initialize();
+        }
+        else {
+            vscode.window.showErrorMessage('Registration failed. Please try again.');
+        }
+    }));
+    ctx.subscriptions.push(vscode.commands.registerCommand('codingcam.login', async function () {
+        // Show login form
+        const email = await vscode.window.showInputBox({
+            prompt: 'Enter your email',
+            placeHolder: 'email@example.com'
+        });
+        if (!email)
+            return;
+        const password = await vscode.window.showInputBox({
+            prompt: 'Enter your password',
+            password: true
+        });
+        if (!password)
+            return;
+        // Login user
+        const api = new api_1.CodingCamBackendApi();
+        const token = await api.login(email, password);
+        if (token) {
+            // Save token
+            await vscode.workspace.getConfiguration().update('codingcam.apiKey', token, true);
+            vscode.window.showInformationMessage('Login successful!');
+            codingcam.initialize();
+        }
+        else {
+            vscode.window.showErrorMessage('Login failed. Please check your credentials and try again.');
+        }
     }));
     ctx.subscriptions.push(codingcam);
     codingcam.initialize();

@@ -7,6 +7,7 @@ import { Options, Setting } from './options';
 import { Desktop } from './desktop';
 import { Logger } from './logger';
 import { Utils } from './utils';
+import { CodingCamBackendApi } from './api';
 
 interface FileSelection {
   selection: vscode.Position;
@@ -48,10 +49,12 @@ export class CodingCam {
   private resourcesLocation: string = '';
   private lastApiKeyPrompted: number = 0;
   private isMetricsEnabled: boolean = false;
+  private api: CodingCamBackendApi;
 
-  constructor(extensionPath: string, logger: Logger) {
+  constructor(extensionPath: string, logger: Logger, api: CodingCamBackendApi) {
     this.extensionPath = extensionPath;
     this.logger = logger;
+    this.api = api;
     this.setResourcesLocation();
     this.options = new Options(logger, this.resourcesLocation);
   }
@@ -209,36 +212,70 @@ export class CodingCam {
   }
 
   public async promptForApiKey(hidden: boolean = true): Promise<void> {
+    const choice = await vscode.window.showQuickPick(
+      ['Enter API Key', 'Register', 'Login'],
+      { placeHolder: 'How would you like to authenticate?' }
+    );
+    
+    if (!choice) return;
+    
+    if (choice === 'Register') {
+      vscode.commands.executeCommand('codingcam.register');
+      return;
+    }
+    
+    if (choice === 'Login') {
+      vscode.commands.executeCommand('codingcam.login');
+      return;
+    }
+    
     let defaultVal = await this.options.getApiKey();
     if (Utils.apiKeyInvalid(defaultVal ?? undefined)) defaultVal = '';
     let promptOptions = {
       prompt: 'CodingCam Api Key',
-      placeHolder: 'Enter your api key from https://codingcam.com/api-key',
+      placeHolder: 'Enter your API key',
       value: defaultVal!,
       ignoreFocusOut: true,
       password: hidden,
       validateInput: Utils.apiKeyInvalid.bind(this),
     };
-    vscode.window.showInputBox(promptOptions).then((val) => {
-      if (val != undefined) {
-        let invalid = Utils.apiKeyInvalid(val);
-        if (!invalid) {
-          this.options.setSetting('settings', 'api_key', val, false);
-        } else vscode.window.setStatusBarMessage(invalid);
-      } else vscode.window.setStatusBarMessage('CodingCam api key not provided');
-    });
+    
+    const val = await vscode.window.showInputBox(promptOptions);
+    if (val != undefined) {
+      let invalid = Utils.apiKeyInvalid(val);
+      if (!invalid) {
+        await vscode.workspace.getConfiguration().update('codingcam.apiKey', val, true);
+        this.options.setSetting('settings', 'api_key', val, false);
+        
+        // Update API with the new key
+        this.api.updateApiKey(val);
+        
+        // Verify the key
+        const isValid = await this.api.validateApiKey(val);
+        if (isValid) {
+          vscode.window.showInformationMessage('API key validated successfully');
+        } else {
+          vscode.window.showWarningMessage('API key saved, but could not be validated. Please verify it is correct.');
+        }
+      } else {
+        vscode.window.setStatusBarMessage(invalid);
+      }
+    } else {
+      vscode.window.setStatusBarMessage('CodingCam api key not provided');
+    }
   }
 
   public async promptForApiUrl(): Promise<void> {
     const apiUrl = await this.options.getApiUrl(true);
     let promptOptions = {
-      prompt: 'CodingCam Api Url (Defaults to https://api.codingcam.com/api/v1)',
-      placeHolder: 'https://api.codingcam.com/api/v1',
+      prompt: 'CodingCam Api Url',
+      placeHolder: 'http://localhost:3001/api',
       value: apiUrl,
       ignoreFocusOut: true,
     };
     vscode.window.showInputBox(promptOptions).then((val) => {
       if (val) {
+        vscode.workspace.getConfiguration().update('codingcam.apiUrl', val, true);
         this.options.setSetting('settings', 'api_url', val, false);
       }
     });
@@ -360,8 +397,8 @@ export class CodingCam {
   }
 
   public async openDashboardWebsite(): Promise<void> {
-    const url = (await this.options.getApiUrl(true)).replace('/api/v1', '').replace('://api.', '://');
-    vscode.env.openExternal(vscode.Uri.parse(url));
+    const localFrontendUrl = 'http://localhost:3000';
+    vscode.env.openExternal(vscode.Uri.parse(localFrontendUrl));
   }
 
   public openConfigFile(): void {
@@ -530,105 +567,38 @@ export class CodingCam {
 
     if (isWrite && this.isDuplicateHeartbeat(file, time, selection)) return;
 
-    let args: string[] = [];
-
-    args.push('--entity', Utils.quote(file));
-
-    let user_agent =
-      this.agentName + '/' + vscode.version + ' vscode-codingcam/' + this.extension.version;
-    args.push('--plugin', Utils.quote(user_agent));
-
-    args.push('--lineno', String(selection.line + 1));
-    args.push('--cursorpos', String(selection.character + 1));
-    args.push('--lines-in-file', String(doc.lineCount));
+    let category = '';
     if (isDebugging) {
-      args.push('--category', 'debugging');
+      category = 'debugging';
     } else if (isCompiling) {
-      args.push('--category', 'building');
+      category = 'building';
     } else if (Utils.isPullRequest(doc.uri)) {
-      args.push('--category', 'code reviewing');
+      category = 'code reviewing';
     }
-
-    if (this.isMetricsEnabled) args.push('--metrics');
-
-    const apiKey = this.options.getApiKeyFromEnv();
-    if (!Utils.apiKeyInvalid(apiKey)) args.push('--key', Utils.quote(apiKey));
-
-    const apiUrl = await this.options.getApiUrl();
-    if (apiUrl) args.push('--api-url', Utils.quote(apiUrl));
 
     const project = this.getProjectName(doc.uri);
-    if (project) args.push('--alternate-project', Utils.quote(project));
-
-    const folder = this.getProjectFolder(doc.uri);
-    if (folder) args.push('--project-folder', Utils.quote(folder));
-
-    if (isWrite) args.push('--write');
-
-    if (Desktop.isWindows() || Desktop.isPortable()) {
-      args.push(
-        '--config',
-        Utils.quote(this.options.getConfigFile(false)),
-        '--log-file',
-        Utils.quote(this.options.getLogFile()),
-      );
+    
+    try {
+      await this.api.sendHeartbeat({
+        entity: file,
+        type: category || 'coding',
+        time: Math.floor(time / 1000),
+        project: project,
+        language: doc.languageId,
+        lines: doc.lineCount,
+        lineno: selection.line + 1,
+        cursorpos: selection.character + 1,
+        is_write: isWrite
+      });
+      
+      if (this.showStatusBar) this.getCodingActivity();
+    } catch (error) {
+      this.logger.error(`Error sending heartbeat: ${error}`);
+      if (this.showStatusBar) {
+        this.updateStatusBarText('CodingCam Error');
+        this.updateStatusBarTooltip(`CodingCam: Error sending data to backend`);
+      }
     }
-
-    if (doc.isUntitled) args.push('--is-unsaved-entity');
-
-    const cliName = process.platform === 'win32' ? 'codingcam.exe' : 'codingcam';
-    const binary = path.join(this.resourcesLocation, cliName);
-
-    this.logger.debug(`Sending heartbeat: ${Utils.formatArguments(binary, args)}`);
-    const options = Desktop.buildOptions();
-    let proc = child_process.execFile(binary, args, options, (error, stdout, stderr) => {
-      if (error != null) {
-        if (stderr && stderr.toString() != '') this.logger.error(stderr.toString());
-        if (stdout && stdout.toString() != '') this.logger.error(stdout.toString());
-        this.logger.error(error.toString());
-      }
-    });
-    proc.on('close', async (code, _signal) => {
-      if (code == 0) {
-        if (this.showStatusBar) this.getCodingActivity();
-      } else if (code == 102 || code == 112) {
-        if (this.showStatusBar) {
-          if (!this.showCodingActivity) this.updateStatusBarText();
-          this.updateStatusBarTooltip(
-            'CodingCam: working offline... coding activity will sync next time we are online',
-          );
-        }
-        this.logger.warn(
-          `Working offline (${code}); Check your ${this.options.getLogFile()} file for more details`,
-        );
-      } else if (code == 103) {
-        let error_msg = `Config parsing error (103); Check your ${this.options.getLogFile()} file for more details`;
-        if (this.showStatusBar) {
-          this.updateStatusBarText('CodingCam Error');
-          this.updateStatusBarTooltip(`CodingCam: ${error_msg}`);
-        }
-        this.logger.error(error_msg);
-      } else if (code == 104) {
-        let error_msg = 'Invalid Api Key (104); Make sure your Api Key is correct!';
-        if (this.showStatusBar) {
-          this.updateStatusBarText('CodingCam Error');
-          this.updateStatusBarTooltip(`CodingCam: ${error_msg}`);
-        }
-        this.logger.error(error_msg);
-        let now: number = Date.now();
-        if (this.lastApiKeyPrompted < now - 86400000) {
-          await this.promptForApiKey(false);
-          this.lastApiKeyPrompted = now;
-        }
-      } else {
-        let error_msg = `Unknown Error (${code}); Check your ${this.options.getLogFile()} file for more details`;
-        if (this.showStatusBar) {
-          this.updateStatusBarText('CodingCam Error');
-          this.updateStatusBarTooltip(`CodingCam: ${error_msg}`);
-        }
-        this.logger.error(error_msg);
-      }
-    });
   }
 
   private async getCodingActivity() {
