@@ -201,6 +201,16 @@ class SessionManager {
             return;
         }
         const now = Date.now();
+        // Update final durations
+        if (this.lastActiveFile && this.currentSession.files[this.lastActiveFile]) {
+            const timeSinceLastUpdate = Math.floor((now - this.currentSession.lastActive) / 1000);
+            this.currentSession.files[this.lastActiveFile].duration += timeSinceLastUpdate;
+            const language = this.currentSession.files[this.lastActiveFile].language;
+            if (language) {
+                this.currentSession.languageBreakdown[language] =
+                    (this.currentSession.languageBreakdown[language] || 0) + timeSinceLastUpdate;
+            }
+        }
         this.currentSession.endTime = now;
         this.currentSession.totalDuration = Math.floor((now - this.currentSession.startTime) / 1000);
         this.logger.info(`Ending session ${this.currentSession.id}, duration: ${this.currentSession.totalDuration}s, forced: ${isForced}`);
@@ -217,9 +227,8 @@ class SessionManager {
             clearInterval(this.periodicSyncTimer);
             this.periodicSyncTimer = null;
         }
-        // Prepare session for sending to backend
+        // Prepare and send final session data
         const payload = this.prepareActivityPayload(this.currentSession);
-        // If offline, queue the session, otherwise send it
         if (!this.isOnline) {
             this.queueOfflineSession(payload);
         }
@@ -344,82 +353,45 @@ class SessionManager {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
         }
+        // Only update local state, no backend calls
         this.heartbeatTimer = setInterval(() => {
-            this.updateLocalSessionState();
+            if (!this.currentSession || this.currentSession.idle) {
+                return;
+            }
+            // Update session duration
+            const now = Date.now();
+            this.currentSession.totalDuration = Math.floor((now - this.currentSession.startTime) / 1000);
+            // Update file durations
+            if (this.lastActiveFile && this.currentSession.files[this.lastActiveFile]) {
+                const timeSinceLastUpdate = Math.floor((now - this.currentSession.lastActive) / 1000);
+                this.currentSession.files[this.lastActiveFile].duration += timeSinceLastUpdate;
+                // Update language duration
+                const language = this.currentSession.files[this.lastActiveFile].language;
+                if (language) {
+                    this.currentSession.languageBreakdown[language] =
+                        (this.currentSession.languageBreakdown[language] || 0) + timeSinceLastUpdate;
+                }
+            }
+            // Update last active time
+            this.currentSession.lastActive = now;
+            // Save current state locally
+            this.saveCurrentSession(false, false);
+            // Check for inactivity
+            const inactivityTime = now - this.currentSession.lastActive;
+            if (inactivityTime > this.INACTIVITY_TIMEOUT) {
+                this.logger.debug(`Session inactive for ${Math.floor(inactivityTime / 1000)}s, ending session`);
+                this.endSession();
+            }
         }, this.HEARTBEAT_INTERVAL);
-    }
-    /**
-     * Update local session state without sending any data to backend
-     */
-    updateLocalSessionState() {
-        if (!this.currentSession || this.currentSession.idle) {
-            return;
-        }
-        // Calculate current duration
-        const currentDuration = Math.floor((Date.now() - this.currentSession.startTime) / 1000);
-        // Update session duration
-        this.currentSession.totalDuration = currentDuration;
-        // Only log in debug mode to reduce noise
-        this.logger.debug(`Session local update: ${this.currentSession.id}, duration: ${currentDuration}s`);
-        // Check if we need to end the session due to long inactivity
-        const inactivityTime = Date.now() - this.currentSession.lastActive;
-        if (inactivityTime > this.INACTIVITY_TIMEOUT) {
-            this.logger.debug(`Ending session due to inactivity (${Math.floor(inactivityTime / 1000)}s)`);
-            this.endSession();
-        }
-        // Save current session state locally only
-        this.saveCurrentSession(false, false);
     }
     /**
      * Start periodic sync timer to send session updates every 10 minutes
      */
     startPeriodicSyncTimer() {
+        // Remove periodic sync timer as we'll only send at session end
         if (this.periodicSyncTimer) {
             clearInterval(this.periodicSyncTimer);
-        }
-        this.periodicSyncTimer = setInterval(() => {
-            this.periodicSessionSync();
-        }, this.PERIODIC_SYNC_INTERVAL);
-    }
-    /**
-     * Send session update to backend every 10 minutes
-     */
-    periodicSessionSync() {
-        if (!this.currentSession || this.currentSession.idle || !this.pendingSessionUpdate) {
-            return;
-        }
-        const now = Date.now();
-        const timeSinceLastSync = now - this.lastSyncTime;
-        // Only sync if it's been 10 minutes since last sync and there are meaningful updates
-        if (timeSinceLastSync >= this.PERIODIC_SYNC_INTERVAL && this.pendingSessionUpdate) {
-            this.logger.info(`Performing 10-minute periodic sync for session ${this.currentSession.id}`);
-            // Create a snapshot of the current session
-            const sessionSnapshot = {
-                ...this.currentSession,
-                endTime: now, // Set temporary end time
-                totalDuration: Math.floor((now - this.currentSession.startTime) / 1000)
-            };
-            // Prepare and send the snapshot
-            const payload = this.prepareActivityPayload(sessionSnapshot);
-            // Add a flag to indicate this is a periodic update
-            payload.is_periodic_update = true;
-            if (this.isOnline) {
-                this.sendSessionToBackend(payload)
-                    .then(() => {
-                    this.logger.info(`Successfully sent periodic session update for ${this.currentSession.id}`);
-                    this.lastSyncTime = now;
-                    this.pendingSessionUpdate = false;
-                })
-                    .catch(error => {
-                    this.logger.error(`Failed to send periodic session update: ${error}`);
-                });
-            }
-            else {
-                // If offline, queue the session update and reset the flag
-                this.queueOfflineSession(payload);
-                this.lastSyncTime = now;
-                this.pendingSessionUpdate = false;
-            }
+            this.periodicSyncTimer = null;
         }
     }
     /**
