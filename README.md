@@ -46,7 +46,7 @@ This repository contains the code for the CodingCam extension, designed for IDEs
 4.  **Create the .env file:**
     Create a .env file in the root of your project
     ```
-    API_BASE_URL=http://localhost:5000/api  
+    API_BASE_URL=http://localhost:3001/api  
     ```
     Adjust the 'API_BASE_URL' variable based on where your local backend is running.
 5. **Open in VS Code:**
